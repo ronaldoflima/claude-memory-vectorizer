@@ -8,19 +8,19 @@ mkdir -p "$SKILLS_DEST"
 
 echo "Installing skills from $SKILLS_SRC → $SKILLS_DEST"
 
-for skill in "$SKILLS_SRC"/*.md; do
+for skill in "$SKILLS_SRC"/*/; do
     name="$(basename "$skill")"
     dest="$SKILLS_DEST/$name"
 
     if [[ -L "$dest" ]]; then
         echo "  update symlink: $name"
-    elif [[ -f "$dest" ]]; then
-        echo "  replace file:   $name"
+    elif [[ -d "$dest" ]]; then
+        echo "  replace dir:    $name"
     else
         echo "  install:        $name"
     fi
 
-    ln -sf "$skill" "$dest"
+    ln -sfn "$skill" "$dest"
 done
 
 echo "Done."
