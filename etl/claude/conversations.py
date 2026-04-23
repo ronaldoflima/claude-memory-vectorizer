@@ -7,13 +7,23 @@ Extracts user/assistant messages, generates embeddings via Ollama, indexes in Qd
 import json
 import hashlib
 import datetime
+import os
 import sys
 from pathlib import Path
 
 import requests
 
-QDRANT_URL = "http://localhost:6333"
-OLLAMA_URL = "http://localhost:11434"
+# Load .env from repo root if present
+_env_file = Path(__file__).parent.parent.parent / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip())
+
+QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 COLLECTION = "agent_sessions"
 EMBEDDING_MODEL = "nomic-embed-text"
 CHUNK_MAX_CHARS = 2000
@@ -22,6 +32,9 @@ CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 HISTORY_FILE = Path.home() / ".claude" / "history.jsonl"
 STATE_FILE = Path(__file__).parent / ".etl_state.json"
 SOURCE_LABEL = "local"
+
+_strip_raw = os.environ.get("PROJECT_PATH_STRIP", "")
+PROJECT_PATH_STRIPS = [s for s in _strip_raw.split(":") if s] if _strip_raw else []
 
 
 def get_embedding(text: str) -> list[float]:
@@ -196,15 +209,8 @@ def index_chunks(chunks: list[dict]):
 
 def clean_project_name(dir_name: str) -> str:
     name = dir_name
-    for clean in [
-        "-Users-ronaldo-limapx-center-",
-        "-home-ronaldo-",
-        "-home-mcpgw-",
-        "-home-claw-",
-        "pessoal-projects-",
-        "px-projects-",
-    ]:
-        name = name.replace(clean, "")
+    for fragment in PROJECT_PATH_STRIPS:
+        name = name.replace(fragment, "")
     return name.strip("-") or dir_name
 
 
