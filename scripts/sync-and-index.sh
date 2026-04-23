@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VPS_HOST="vps-mesh-root"
 VPS_MCPGW_HOST="vps-mesh-root"
 QDRANT_VPS_PORT=6333
@@ -37,14 +38,14 @@ QDRANT_URL="http://localhost:$LOCAL_TUNNEL_PORT"
 
 # 3. ETL - Mac local sessions
 log "Indexing Mac local sessions..."
-PYTHONUNBUFFERED=1 python3 "$SCRIPT_DIR/etl.py" \
+PYTHONUNBUFFERED=1 python3 "$ROOT_DIR/etl/claude/conversations.py" \
     --qdrant-url "$QDRANT_URL" \
     --source-label local \
     2>&1 | tee -a "$LOG_FILE"
 
 # 4. ETL - VPS mcpgw sessions
 log "Indexing VPS mcpgw sessions..."
-PYTHONUNBUFFERED=1 python3 "$SCRIPT_DIR/etl.py" \
+PYTHONUNBUFFERED=1 python3 "$ROOT_DIR/etl/claude/conversations.py" \
     --qdrant-url "$QDRANT_URL" \
     --source-dir /tmp/vps-mcpgw-claude-projects \
     --history /tmp/vps-mcpgw-claude-history.jsonl \
@@ -55,7 +56,7 @@ PYTHONUNBUFFERED=1 python3 "$SCRIPT_DIR/etl.py" \
 # 5. ETL - GitHub PRs (last 7 days)
 log "Indexing GitHub PRs..."
 SINCE=$(date -v-7d '+%Y-%m-%d')
-PYTHONUNBUFFERED=1 python3 "$SCRIPT_DIR/etl_prs.py" \
+PYTHONUNBUFFERED=1 python3 "$ROOT_DIR/etl/github/prs.py" \
     --qdrant-url "$QDRANT_URL" \
     --org px-center \
     --since "$SINCE" \
