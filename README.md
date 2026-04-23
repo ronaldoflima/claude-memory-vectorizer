@@ -48,7 +48,7 @@ platforms/
 docker compose up -d
 ```
 
-**Remote** (connect via SSH tunnel):
+**Remote Tunnel** (optional - if running in VPS):
 
 ```bash
 ssh -fNL 6333:localhost:6333 your-vps-host
