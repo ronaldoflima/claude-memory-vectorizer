@@ -12,6 +12,26 @@ Indexes Claude Code conversation history into a vector store (Qdrant) for semant
 
 Search is hybrid: semantic first, fulltext fallback when best score < 0.6.
 
+## Project structure
+
+```
+etl/
+  claude/conversations.py   # ETL for Claude Code sessions
+  obsidian/notes.py         # ETL for Obsidian vault
+  github/prs.py             # ETL for GitHub PRs and commits
+mcp/
+  conversation_history_search.py  # MCP plugin for agent search
+  work_artifacts_search.py        # MCP plugin for PR/commit search
+scripts/
+  sync-and-index.sh         # Full sync: pull VPS sources + tunnel + index
+  pull-from-vps.sh          # Pull Claude sessions (and optionally Obsidian) from VPS
+  push-to-embedding-host.sh # Push local sources to a remote embedding host
+  check-health.sh           # Health check for Qdrant + Ollama
+search.py                   # CLI search tool
+platforms/
+  claude-code/              # Claude Code skill + install script
+```
+
 ## Requirements
 
 - Python 3.11+
@@ -45,78 +65,97 @@ ollama pull nomic-embed-text
 pip install requests
 ```
 
+### 4. Configuration
+
+```bash
+cp .env.example .env
+# edit .env with your values
+```
+
+Key variables:
+
+| Variable | Description |
+|----------|-------------|
+| `QDRANT_URL` | Qdrant endpoint (default: `http://localhost:6333`) |
+| `OLLAMA_URL` | Ollama endpoint (default: `http://localhost:11434`) |
+| `VPS_HOST` | SSH host where Qdrant runs (for tunnel in `sync-and-index.sh`) |
+| `VPS_SOURCE_HOST` | SSH host to pull Claude sessions from (optional) |
+| `VPS_SOURCE_USER` | User on the VPS source host |
+| `VPS_SOURCE_OBSIDIAN_DIR` | Obsidian vault path on the VPS (optional) |
+| `GITHUB_ORG` | GitHub org/user for PR indexing (optional) |
+| `EMBEDDING_HOST` | Host that runs the ETL, for `push-to-embedding-host.sh` |
+| `REMOTE_DIR` | Remote path for synced sources |
+| `OBSIDIAN_DIR` | Local Obsidian vault path |
+| `PROJECT_PATH_STRIP` | Colon-separated path fragments to strip from Claude's internal project directory names |
+
 ## Usage
 
 ### Index conversations (incremental)
 
 ```bash
-python3 etl.py
+python3 etl/claude/conversations.py
 ```
 
-Only processes new or modified session files since the last run. State is saved in `.etl_state.json`.
+Only processes new or modified session files since the last run. State is saved in `etl/claude/.etl_state.json`.
 
 ### Index options
 
 ```bash
-python3 etl.py --dry-run              # show what would be indexed, no writes
-python3 etl.py --force                # re-index everything
-python3 etl.py --qdrant-url http://localhost:6333   # custom Qdrant URL
-python3 etl.py --source-dir /path/to/.claude/projects  # custom source dir
-python3 etl.py --history /path/to/history.jsonl    # custom history file
-python3 etl.py --source-label my-machine           # tag chunks by origin
-python3 etl.py --state-file /path/to/state.json    # custom state file
+python3 etl/claude/conversations.py --dry-run
+python3 etl/claude/conversations.py --force
+python3 etl/claude/conversations.py --qdrant-url http://localhost:6333
+python3 etl/claude/conversations.py --source-dir /path/to/.claude/projects
+python3 etl/claude/conversations.py --history /path/to/history.jsonl
+python3 etl/claude/conversations.py --source-label my-machine
+python3 etl/claude/conversations.py --state-file /path/to/state.json
 ```
 
 ### Search
 
 ```bash
 python3 search.py "how did we implement authentication"
-python3 search.py "qdrant setup" --project torrepx
+python3 search.py "qdrant setup" --project my-project
 python3 search.py "deploy pipeline" --date 2026-03-15
 python3 search.py "bug fix" --limit 10
 ```
 
 ## Multi-source setup (optional)
 
-To index sessions from multiple machines, run the ETL separately for each source with different `--source-label` and `--state-file` values pointing to the same Qdrant instance.
-
-Example: indexing a VPS alongside your local machine:
+Pull sessions from a VPS and index alongside local sessions:
 
 ```bash
-# Local sessions
-python3 etl.py --source-label local
+# Pull VPS sources locally
+./scripts/pull-from-vps.sh
 
-# VPS sessions (after rsyncing them locally)
-rsync -az vps-host:/home/user/.claude/projects/ /tmp/vps-projects/
-rsync -az vps-host:/home/user/.claude/history.jsonl /tmp/vps-history.jsonl
+# Index local sessions
+python3 etl/claude/conversations.py --source-label local
 
-python3 etl.py \
-  --source-dir /tmp/vps-projects \
-  --history /tmp/vps-history.jsonl \
+# Index VPS sessions
+python3 etl/claude/conversations.py \
+  --source-dir /tmp/vps-source-claude-projects \
+  --history /tmp/vps-source-claude-history.jsonl \
   --source-label vps \
   --state-file .etl_state_vps.json
 ```
 
-The `sync-and-index.sh` script automates this full flow including the SSH tunnel.
+`scripts/sync-and-index.sh` automates this full flow including the SSH tunnel to Qdrant.
 
-## Sync sources to another machine
+## Sync sources to a remote embedding host
 
-`push-to-embedding-host.sh` rsyncs your Claude projects, history, and Obsidian vault to a remote host that runs the ETL. Configure the target host:
+`scripts/push-to-embedding-host.sh` rsyncs your Claude projects, history, and Obsidian vault to a remote host that runs the ETL:
 
 ```bash
-# Default host is "desktop" (from SSH config)
-./push-to-embedding-host.sh
-
-# Custom host via argument or env var
-./push-to-embedding-host.sh my-mac
-EMBEDDING_HOST=my-mac ./push-to-embedding-host.sh
+./scripts/push-to-embedding-host.sh
+# or override host
+EMBEDDING_HOST=my-host ./scripts/push-to-embedding-host.sh
 ```
 
-## Additional ETLs
+## Claude Code skill
 
-| Script | Description |
-|--------|-------------|
-| `etl_obsidian.py` | Indexes Obsidian vault notes into a separate `obsidian_notes` collection |
-| `etl_prs.py` | Indexes GitHub PRs and commits via GitHub API |
-| `conversation_history_search.py` | MCP-compatible search server used by Claude agents |
-| `work_artifacts_search.py` | MCP-compatible search for PRs/commits |
+Install the memory search skill into Claude Code:
+
+```bash
+./platforms/claude-code/install.sh
+```
+
+This symlinks `platforms/claude-code/skills/memory-search.md` into `~/.claude/skills/`, enabling Claude to search your conversation history directly.
