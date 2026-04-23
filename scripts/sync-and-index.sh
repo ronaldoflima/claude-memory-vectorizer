@@ -29,8 +29,8 @@ log "=== Starting sync-and-index ==="
 # 1. Rsync VPS sessions to local /tmp (optional)
 if [[ -n "$VPS_SOURCE_HOST" && -n "$VPS_SOURCE_USER" ]]; then
     log "Syncing VPS sessions ($VPS_SOURCE_HOST)..."
-    rsync -az --delete "$VPS_SOURCE_HOST:/home/$VPS_SOURCE_USER/.claude/projects/" /tmp/vps-mcpgw-claude-projects/
-    rsync -az "$VPS_SOURCE_HOST:/home/$VPS_SOURCE_USER/.claude/history.jsonl" /tmp/vps-mcpgw-claude-history.jsonl 2>/dev/null || true
+    rsync -az --delete "$VPS_SOURCE_HOST:/home/$VPS_SOURCE_USER/.claude/projects/" /tmp/vps-source-claude-projects/
+    rsync -az "$VPS_SOURCE_HOST:/home/$VPS_SOURCE_USER/.claude/history.jsonl" /tmp/vps-source-claude-history.jsonl 2>/dev/null || true
     log "VPS sync done"
 else
     log "Skipping VPS sync (VPS_SOURCE_HOST/VPS_SOURCE_USER not set)"
@@ -62,8 +62,8 @@ if [[ -n "$VPS_SOURCE_HOST" && -n "$VPS_SOURCE_USER" ]]; then
     log "Indexing VPS sessions..."
     PYTHONUNBUFFERED=1 python3 "$ROOT_DIR/etl/claude/conversations.py" \
         --qdrant-url "$QDRANT_URL" \
-        --source-dir /tmp/vps-mcpgw-claude-projects \
-        --history /tmp/vps-mcpgw-claude-history.jsonl \
+        --source-dir /tmp/vps-source-claude-projects \
+        --history /tmp/vps-source-claude-history.jsonl \
         --source-label vps-mcpgw \
         --state-file "$SCRIPT_DIR/.etl_state_vps.json" \
         2>&1 | tee -a "$LOG_FILE"
