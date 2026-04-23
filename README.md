@@ -42,11 +42,13 @@ platforms/
 
 ### 1. Qdrant
 
+**Local** (with persistent volume):
+
 ```bash
-docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
+docker compose up -d
 ```
 
-Or connect to a remote Qdrant via SSH tunnel:
+**Remote** (connect via SSH tunnel):
 
 ```bash
 ssh -fNL 6333:localhost:6333 your-vps-host

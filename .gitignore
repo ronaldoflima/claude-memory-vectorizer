@@ -10,3 +10,6 @@ __pycache__/
 
 # local config
 .env
+
+# qdrant local data
+qdrant-data/
