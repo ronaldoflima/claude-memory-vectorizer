@@ -152,6 +152,42 @@ python3 etl/claude/conversations.py \
 EMBEDDING_HOST=my-host ./scripts/push-to-embedding-host.sh
 ```
 
+## Automação com crontab
+
+Para indexar automaticamente em segundo plano, adicione uma entrada no crontab.
+
+### Indexação local a cada hora
+
+```bash
+crontab -e
+```
+
+Adicione:
+
+```cron
+# Indexar sessões Claude locais a cada hora
+0 * * * * cd /path/to/claude-memory-vectorizer && python3 etl/claude/conversations.py >> /tmp/claude-vectorizer.log 2>&1
+```
+
+### Sync completo (VPS + local) a cada hora
+
+Se você usa o `sync-and-index.sh` (que abre túnel SSH, puxa fontes do VPS e indexa tudo):
+
+```cron
+# Sync completo + indexação a cada hora
+0 * * * * cd /path/to/claude-memory-vectorizer && ./scripts/sync-and-index.sh >> /tmp/claude-vectorizer-sync.log 2>&1
+```
+
+### Dicas
+
+- Substitua `/path/to/claude-memory-vectorizer` pelo caminho absoluto do repositório.
+- Use `crontab -l` para listar entradas existentes.
+- Verifique os logs em `/tmp/claude-vectorizer.log` se algo não funcionar.
+- O script é incremental: só processa arquivos novos/modificados desde a última execução.
+- Para rodar apenas em dias úteis: `0 * * * 1-5 cd /path/... && python3 etl/claude/conversations.py`
+
+---
+
 ## Claude Code skill
 
 Install the memory search skill into Claude Code:
