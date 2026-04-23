@@ -7,8 +7,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 [[ -f "$ROOT_DIR/.env" ]] && set -a && source "$ROOT_DIR/.env" && set +a
 
 VPS_HOST="${VPS_HOST:-}"
-VPS_MCPGW_HOST="${VPS_MCPGW_HOST:-}"
-VPS_MCPGW_USER="${VPS_MCPGW_USER:-}"
+VPS_SOURCE_HOST="${VPS_SOURCE_HOST:-}"
+VPS_SOURCE_USER="${VPS_SOURCE_USER:-}"
 QDRANT_VPS_PORT="${QDRANT_VPS_PORT:-6333}"
 GITHUB_ORG="${GITHUB_ORG:-}"
 LOCAL_TUNNEL_PORT=16333
@@ -27,13 +27,13 @@ trap cleanup EXIT
 log "=== Starting sync-and-index ==="
 
 # 1. Rsync VPS sessions to local /tmp (optional)
-if [[ -n "$VPS_MCPGW_HOST" && -n "$VPS_MCPGW_USER" ]]; then
-    log "Syncing VPS sessions ($VPS_MCPGW_HOST)..."
-    rsync -az --delete "$VPS_MCPGW_HOST:/home/$VPS_MCPGW_USER/.claude/projects/" /tmp/vps-mcpgw-claude-projects/
-    rsync -az "$VPS_MCPGW_HOST:/home/$VPS_MCPGW_USER/.claude/history.jsonl" /tmp/vps-mcpgw-claude-history.jsonl 2>/dev/null || true
+if [[ -n "$VPS_SOURCE_HOST" && -n "$VPS_SOURCE_USER" ]]; then
+    log "Syncing VPS sessions ($VPS_SOURCE_HOST)..."
+    rsync -az --delete "$VPS_SOURCE_HOST:/home/$VPS_SOURCE_USER/.claude/projects/" /tmp/vps-mcpgw-claude-projects/
+    rsync -az "$VPS_SOURCE_HOST:/home/$VPS_SOURCE_USER/.claude/history.jsonl" /tmp/vps-mcpgw-claude-history.jsonl 2>/dev/null || true
     log "VPS sync done"
 else
-    log "Skipping VPS sync (VPS_MCPGW_HOST/VPS_MCPGW_USER not set)"
+    log "Skipping VPS sync (VPS_SOURCE_HOST/VPS_SOURCE_USER not set)"
 fi
 
 # 2. Open SSH tunnel to VPS Qdrant
@@ -58,7 +58,7 @@ PYTHONUNBUFFERED=1 python3 "$ROOT_DIR/etl/claude/conversations.py" \
     2>&1 | tee -a "$LOG_FILE"
 
 # 4. ETL - VPS sessions (optional)
-if [[ -n "$VPS_MCPGW_HOST" && -n "$VPS_MCPGW_USER" ]]; then
+if [[ -n "$VPS_SOURCE_HOST" && -n "$VPS_SOURCE_USER" ]]; then
     log "Indexing VPS sessions..."
     PYTHONUNBUFFERED=1 python3 "$ROOT_DIR/etl/claude/conversations.py" \
         --qdrant-url "$QDRANT_URL" \
