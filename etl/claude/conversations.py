@@ -24,9 +24,11 @@ if _env_file.exists():
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-COLLECTION = "agent_sessions"
-EMBEDDING_MODEL = "nomic-embed-text"
-CHUNK_MAX_CHARS = 2000
+COLLECTION = os.environ.get("COLLECTION", "agent_sessions")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
+VECTOR_SIZE = int(os.environ.get("VECTOR_SIZE", "768"))
+CHUNK_MAX_CHARS = int(os.environ.get("CHUNK_MAX_CHARS", "3500"))
+CHUNK_OVERLAP_CHARS = int(os.environ.get("CHUNK_OVERLAP_CHARS", "400"))
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 HISTORY_FILE = Path.home() / ".claude" / "history.jsonl"
@@ -53,10 +55,29 @@ def ensure_collection():
     requests.put(
         f"{QDRANT_URL}/collections/{COLLECTION}",
         json={
-            "vectors": {"size": 768, "distance": "Cosine"},
+            "vectors": {"size": VECTOR_SIZE, "distance": "Cosine"},
+            "on_disk_payload": True,
         },
     ).raise_for_status()
-    print(f"Collection '{COLLECTION}' created.")
+    for field in ("project", "date", "source", "session_id"):
+        requests.put(
+            f"{QDRANT_URL}/collections/{COLLECTION}/index",
+            json={"field_name": field, "field_schema": "keyword"},
+        )
+    requests.put(
+        f"{QDRANT_URL}/collections/{COLLECTION}/index",
+        json={
+            "field_name": "text",
+            "field_schema": {
+                "type": "text",
+                "tokenizer": "multilingual",
+                "min_token_len": 2,
+                "max_token_len": 40,
+                "lowercase": True,
+            },
+        },
+    )
+    print(f"Collection '{COLLECTION}' created (size={VECTOR_SIZE}).")
 
 
 def load_session_dates() -> dict:
@@ -127,42 +148,74 @@ def extract_messages(jsonl_path: Path) -> list[dict]:
     return messages
 
 
+def _tail_overlap(text: str, max_chars: int) -> str:
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    tail = text[-max_chars:]
+    nl = tail.find("\n")
+    if 0 <= nl < max_chars // 2:
+        tail = tail[nl + 1 :]
+    return tail
+
+
 def chunk_session(messages: list[dict], session_id: str, project: str, file_path: str, session_date: str = "", session_first_ts: str = "", session_last_ts: str = "") -> list[dict]:
-    chunks = []
-    current_chunk = []
+    chunks: list[dict] = []
+    current_parts: list[str] = []
     current_len = 0
+
+    def base_payload(text: str) -> dict:
+        return {
+            "text": text,
+            "session_id": session_id,
+            "project": project,
+            "source": SOURCE_LABEL,
+            "file": file_path,
+            "date": session_date,
+            "first_ts": session_first_ts,
+            "last_ts": session_last_ts,
+        }
+
+    def flush():
+        nonlocal current_parts, current_len
+        if not current_parts:
+            return
+        text = "\n\n".join(current_parts)
+        chunks.append(base_payload(text))
+        if CHUNK_OVERLAP_CHARS > 0:
+            tail = _tail_overlap(text, CHUNK_OVERLAP_CHARS)
+            current_parts = [tail] if tail else []
+            current_len = len(tail)
+        else:
+            current_parts = []
+            current_len = 0
 
     for msg in messages:
         prefix = "User" if msg["role"] == "user" else "Assistant"
         line = f"{prefix}: {msg['text']}"
 
-        if current_len + len(line) > CHUNK_MAX_CHARS and current_chunk:
-            chunks.append({
-                "text": "\n\n".join(current_chunk),
-                "session_id": session_id,
-                "project": project,
-                "source": SOURCE_LABEL,
-                "file": file_path,
-                "date": session_date,
-                "first_ts": session_first_ts,
-                "last_ts": session_last_ts,
-            })
-            current_chunk = []
-            current_len = 0
+        if current_len + len(line) + 2 > CHUNK_MAX_CHARS and current_parts:
+            flush()
 
         if len(line) > CHUNK_MAX_CHARS:
-            line = line[:CHUNK_MAX_CHARS]
+            start = 0
+            while start < len(line):
+                end = min(start + CHUNK_MAX_CHARS, len(line))
+                piece = line[start:end]
+                if current_parts and current_len + len(piece) + 2 > CHUNK_MAX_CHARS:
+                    flush()
+                current_parts.append(piece)
+                current_len += len(piece) + 2
+                if end < len(line):
+                    flush()
+                start = end
+            continue
 
-        current_chunk.append(line)
-        current_len += len(line)
+        current_parts.append(line)
+        current_len += len(line) + 2
 
-    if current_chunk:
-        chunks.append({
-            "text": "\n\n".join(current_chunk),
-            "session_id": session_id,
-            "project": project,
-            "file": file_path,
-        })
+    if current_parts:
+        text = "\n\n".join(current_parts)
+        chunks.append(base_payload(text))
 
     return chunks
 

@@ -7,8 +7,8 @@ import requests
 QDRANT_URL = "http://localhost:6333"
 OLLAMA_URL = "http://localhost:11434"
 COLLECTION = "agent_sessions"
-EMBEDDING_MODEL = "nomic-embed-text"
-SEMANTIC_THRESHOLD = 0.6
+EMBEDDING_MODEL = "bge-m3"
+SEMANTIC_THRESHOLD = 0.45
 
 
 def get_embedding(text: str) -> list[float]:
@@ -37,7 +37,10 @@ def fulltext_search(query: str, limit: int = 5, project: str = None, date: str =
     )
     resp.raise_for_status()
     points = resp.json().get("result", {}).get("points", [])
-    return [{"id": p["id"], "score": 1.0, "payload": p["payload"], "match": "text"} for p in points]
+    return [
+        {"id": p["id"], "score": 0.0, "payload": p["payload"], "match": "text", "rank": idx}
+        for idx, p in enumerate(points)
+    ]
 
 
 def semantic_search(query: str, limit: int = 5, project: str = None, date: str = None) -> list[dict]:
@@ -74,10 +77,10 @@ def search(query: str, limit: int = 5, project: str = None, date: str = None):
         text_results = fulltext_search(query, limit=limit, project=project, date=date)
         if text_results:
             seen_ids = {r["id"] for r in results}
+            results.sort(key=lambda r: r["score"], reverse=True)
             for tr in text_results:
                 if tr["id"] not in seen_ids:
                     results.append(tr)
-            results.sort(key=lambda r: (r["match"] == "text", r["score"]), reverse=True)
             results = results[:limit]
 
     for i, r in enumerate(results):
@@ -85,7 +88,7 @@ def search(query: str, limit: int = 5, project: str = None, date: str = None):
         payload = r["payload"]
         date_info = payload.get("date", "?")
         match_type = r["match"]
-        label = f"Score: {score:.4f}" if match_type == "semantic" else "FULLTEXT"
+        label = f"Score: {score:.4f}" if match_type == "semantic" else f"FULLTEXT#{r.get('rank', 0)+1}"
         print(f"\n{'='*60}")
         print(f"[{i+1}] {label} | {date_info} | {payload['project']} | {payload['session_id'][:8]}")
         print(f"{'='*60}")
