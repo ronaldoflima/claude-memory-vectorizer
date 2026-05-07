@@ -1,0 +1,205 @@
+# claude-memory-vectorizer
+
+Indexes Claude Code conversation history into a vector store (Qdrant) for semantic search across past sessions. Enables AI agents and tools to query what was discussed, decided, or built in previous conversations.
+
+## How it works
+
+1. Reads `.jsonl` session files from `~/.claude/projects/`
+2. Extracts user/assistant messages and chunks them (~2000 chars)
+3. Generates embeddings via Ollama (`bge-m3`, 1024 dims, runs locally — or `nomic-embed-text`/768 dims as a lighter alternative)
+4. Upserts into Qdrant with metadata (project, date, session ID, source)
+5. Tracks processed files in a state file for incremental runs
+
+Search is hybrid: semantic first, fulltext fallback when best score < 0.6.
+
+## Project structure
+
+```
+etl/
+  claude/conversations.py   # ETL for Claude Code sessions
+  obsidian/notes.py         # ETL for Obsidian vault
+  github/prs.py             # ETL for GitHub PRs and commits
+mcp/
+  conversation_history_search.py  # MCP plugin for agent search
+  work_artifacts_search.py        # MCP plugin for PR/commit search
+scripts/
+  sync-and-index.sh         # Full sync: pull VPS sources + tunnel + index
+  pull-from-vps.sh          # Pull Claude sessions (and optionally Obsidian) from VPS
+  push-to-embedding-host.sh # Push local sources to a remote embedding host
+  check-health.sh           # Health check for Qdrant + Ollama
+search.py                   # CLI search tool
+platforms/
+  claude-code/              # Claude Code skill + install script
+```
+
+## Requirements
+
+- Python 3.11+
+- [Ollama](https://ollama.com) with `bge-m3` (default) or `nomic-embed-text` model
+- [Qdrant](https://qdrant.tech) (local via Docker or remote)
+
+## Setup
+
+### 1. Qdrant
+
+**Local** (with persistent volume):
+
+```bash
+docker compose up -d
+```
+
+**Remote Tunnel** (optional - if running in VPS):
+
+```bash
+ssh -fNL 6333:localhost:6333 your-vps-host
+```
+
+### 2. Ollama
+
+```bash
+# Install Ollama: https://ollama.com
+# Default (recommended): bge-m3 — 1024 dims, multilingual, larger context
+ollama pull bge-m3
+
+# Lighter alternative: nomic-embed-text — 768 dims
+# ollama pull nomic-embed-text
+```
+
+### 3. Python dependencies
+
+```bash
+pip install requests
+```
+
+### 4. Configuration
+
+```bash
+cp .env.example .env
+# edit .env with your values
+```
+
+Key variables:
+
+| Variable | Description |
+|----------|-------------|
+| `QDRANT_URL` | Qdrant endpoint (default: `http://localhost:6333`) |
+| `OLLAMA_URL` | Ollama endpoint (default: `http://localhost:11434`) |
+| `EMBEDDING_MODEL` | Ollama model (default: `bge-m3`; alternative: `nomic-embed-text`) |
+| `VECTOR_SIZE` | Vector dim — must match the model (`1024` for `bge-m3`, `768` for `nomic-embed-text`). Changing this requires reindexing. |
+| `VPS_HOST` | SSH host where Qdrant runs (for tunnel in `sync-and-index.sh`) |
+| `VPS_SOURCE_HOST` | SSH host to pull Claude sessions from (optional) |
+| `VPS_SOURCE_USER` | User on the VPS source host |
+| `VPS_SOURCE_OBSIDIAN_DIR` | Obsidian vault path on the VPS (optional) |
+| `GITHUB_ORG` | GitHub org/user for PR indexing (optional) |
+| `EMBEDDING_HOST` | Host that runs the ETL, for `push-to-embedding-host.sh` |
+| `REMOTE_DIR` | Remote path for synced sources |
+| `OBSIDIAN_DIR` | Local Obsidian vault path |
+| `PROJECT_PATH_STRIP` | Colon-separated path fragments to strip from Claude's internal project directory names |
+
+## Usage
+
+### Index conversations (incremental)
+
+```bash
+python3 etl/claude/conversations.py
+```
+
+Only processes new or modified session files since the last run. State is saved in `etl/claude/.etl_state.json`.
+
+### Index options
+
+```bash
+python3 etl/claude/conversations.py --dry-run
+python3 etl/claude/conversations.py --force
+python3 etl/claude/conversations.py --qdrant-url http://localhost:6333
+python3 etl/claude/conversations.py --source-dir /path/to/.claude/projects
+python3 etl/claude/conversations.py --history /path/to/history.jsonl
+python3 etl/claude/conversations.py --source-label my-machine
+python3 etl/claude/conversations.py --state-file /path/to/state.json
+```
+
+### Search
+
+```bash
+python3 search.py "how did we implement authentication"
+python3 search.py "qdrant setup" --project my-project
+python3 search.py "deploy pipeline" --date 2026-03-15
+python3 search.py "bug fix" --limit 10
+```
+
+## Multi-source setup (optional)
+
+Pull sessions from a VPS and index alongside local sessions:
+
+```bash
+# Pull VPS sources locally
+./scripts/pull-from-vps.sh
+
+# Index local sessions
+python3 etl/claude/conversations.py --source-label local
+
+# Index VPS sessions
+python3 etl/claude/conversations.py \
+  --source-dir /tmp/vps-source-claude-projects \
+  --history /tmp/vps-source-claude-history.jsonl \
+  --source-label vps \
+  --state-file .etl_state_vps.json
+```
+
+`scripts/sync-and-index.sh` automates this full flow including the SSH tunnel to Qdrant.
+
+## Sync sources to a remote embedding host
+
+`scripts/push-to-embedding-host.sh` rsyncs your Claude projects, history, and Obsidian vault to a remote host that runs the ETL:
+
+```bash
+./scripts/push-to-embedding-host.sh
+# or override host
+EMBEDDING_HOST=my-host ./scripts/push-to-embedding-host.sh
+```
+
+## Automação com crontab
+
+Para indexar automaticamente em segundo plano, adicione uma entrada no crontab.
+
+### Indexação local a cada hora
+
+```bash
+crontab -e
+```
+
+Adicione:
+
+```cron
+# Indexar sessões Claude locais a cada hora
+0 * * * * cd /path/to/claude-memory-vectorizer && python3 etl/claude/conversations.py >> /tmp/claude-vectorizer.log 2>&1
+```
+
+### Sync completo (VPS + local) a cada hora
+
+Se você usa o `sync-and-index.sh` (que abre túnel SSH, puxa fontes do VPS e indexa tudo):
+
+```cron
+# Sync completo + indexação a cada hora
+0 * * * * cd /path/to/claude-memory-vectorizer && ./scripts/sync-and-index.sh >> /tmp/claude-vectorizer-sync.log 2>&1
+```
+
+### Dicas
+
+- Substitua `/path/to/claude-memory-vectorizer` pelo caminho absoluto do repositório.
+- Use `crontab -l` para listar entradas existentes.
+- Verifique os logs em `/tmp/claude-vectorizer.log` se algo não funcionar.
+- O script é incremental: só processa arquivos novos/modificados desde a última execução.
+- Para rodar apenas em dias úteis: `0 * * * 1-5 cd /path/... && python3 etl/claude/conversations.py`
+
+---
+
+## Claude Code skill
+
+Install the memory search skill into Claude Code:
+
+```bash
+./platforms/claude-code/install.sh
+```
+
+This symlinks `platforms/claude-code/skills/memory-search.md` into `~/.claude/skills/`, enabling Claude to search your conversation history directly.
