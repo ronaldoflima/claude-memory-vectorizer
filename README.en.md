@@ -96,6 +96,14 @@ ollama pull bge-m3
 
 ### 3. Python dependencies
 
+If you don't have `pip` yet:
+
+```bash
+python3 -m ensurepip --upgrade
+```
+
+Install dependencies:
+
 ```bash
 pip install -r requirements.txt
 ```
