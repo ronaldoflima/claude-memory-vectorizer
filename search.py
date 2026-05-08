@@ -93,8 +93,8 @@ def search(query: str, limit: int = 5, project: str = None, date: str = None):
         print(f"[{i+1}] {label} | {date_info} | {payload['project']} | {payload['session_id'][:8]}")
         print(f"{'='*60}")
         text = payload["text"]
-        if len(text) > 500:
-            text = text[:500] + "..."
+        if len(text) > 2000:
+            text = text[:2000] + "..."
         print(text)
 
     return results

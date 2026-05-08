@@ -12,6 +12,7 @@ VPS_SOURCE_USER="${VPS_SOURCE_USER:-}"
 QDRANT_VPS_PORT="${QDRANT_VPS_PORT:-6333}"
 GITHUB_ORG="${GITHUB_ORG:-}"
 LOCAL_TUNNEL_PORT=16333
+PYTHON_BIN="${PYTHON_BIN:-/usr/local/bin/python3}"
 LOG_FILE="$SCRIPT_DIR/sync.log"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
@@ -58,7 +59,7 @@ QDRANT_URL="http://localhost:$LOCAL_TUNNEL_PORT"
 
 # 3. ETL - local Claude sessions
 log "Indexing local sessions..."
-PYTHONUNBUFFERED=1 python3 "$ROOT_DIR/etl/claude/conversations.py" \
+PYTHONUNBUFFERED=1 "$PYTHON_BIN" "$ROOT_DIR/etl/claude/conversations.py" \
     --qdrant-url "$QDRANT_URL" \
     --source-label local \
     2>&1 | tee -a "$LOG_FILE"
@@ -66,7 +67,7 @@ PYTHONUNBUFFERED=1 python3 "$ROOT_DIR/etl/claude/conversations.py" \
 # 4. ETL - VPS sessions (optional)
 if [[ -n "$VPS_SOURCE_HOST" && -n "$VPS_SOURCE_USER" ]]; then
     log "Indexing VPS sessions..."
-    PYTHONUNBUFFERED=1 python3 "$ROOT_DIR/etl/claude/conversations.py" \
+    PYTHONUNBUFFERED=1 "$PYTHON_BIN" "$ROOT_DIR/etl/claude/conversations.py" \
         --qdrant-url "$QDRANT_URL" \
         --source-dir /tmp/vps-source-claude-projects \
         --history /tmp/vps-source-claude-history.jsonl \
@@ -79,7 +80,7 @@ fi
 if [[ -n "$GITHUB_ORG" ]]; then
     log "Indexing GitHub PRs..."
     SINCE=$(date -v-7d '+%Y-%m-%d')
-    PYTHONUNBUFFERED=1 python3 "$ROOT_DIR/etl/github/prs.py" \
+    PYTHONUNBUFFERED=1 "$PYTHON_BIN" "$ROOT_DIR/etl/github/prs.py" \
         --qdrant-url "$QDRANT_URL" \
         --org "$GITHUB_ORG" \
         --since "$SINCE" \
