@@ -99,6 +99,10 @@ ollama pull bge-m3
 Se ainda não tem o `pip`:
 
 ```bash
+# Ubuntu / Debian
+sudo apt install -y python3-pip python3-venv
+
+# macOS / Windows / outras distros
 python3 -m ensurepip --upgrade
 ```
 
