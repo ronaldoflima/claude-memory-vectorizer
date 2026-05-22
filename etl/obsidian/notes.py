@@ -7,27 +7,116 @@ Indexes markdown notes with frontmatter metadata.
 import json
 import hashlib
 import datetime
+import os
 import sys
 from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 
-QDRANT_URL = "http://localhost:6333"
-OLLAMA_URL = "http://localhost:11434"
-COLLECTION = "agent_sessions"
-EMBEDDING_MODEL = "nomic-embed-text"
-CHUNK_MAX_CHARS = 2000
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
+
+QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+COLLECTION = os.environ.get("COLLECTION_NOTES", "agent_notes")
+COLLECTION_UNIFIED = os.environ.get("COLLECTION_UNIFIED", "agent_memory")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "bge-m3")
+VECTOR_SIZE = int(os.environ.get("VECTOR_SIZE", "1024"))
+CHUNK_MAX_CHARS = int(os.environ.get("CHUNK_MAX_CHARS_NOTES", "2000"))
 
 STATE_FILE = Path(__file__).parent / ".etl_obsidian_state.json"
 SOURCE_LABEL = "obsidian"
+
+
+def ensure_collection():
+    resp = requests.get(f"{QDRANT_URL}/collections/{COLLECTION}")
+    if resp.status_code == 200:
+        return
+    requests.put(
+        f"{QDRANT_URL}/collections/{COLLECTION}",
+        json={"vectors": {"size": VECTOR_SIZE, "distance": "Cosine"}, "on_disk_payload": True},
+    ).raise_for_status()
+    for field in ("project", "source", "date", "status", "prioridade", "responsavel", "origem", "tags"):
+        requests.put(
+            f"{QDRANT_URL}/collections/{COLLECTION}/index",
+            json={"field_name": field, "field_schema": "keyword"},
+        )
+    requests.put(
+        f"{QDRANT_URL}/collections/{COLLECTION}/index",
+        json={
+            "field_name": "text",
+            "field_schema": {
+                "type": "text",
+                "tokenizer": "multilingual",
+                "min_token_len": 2,
+                "max_token_len": 40,
+                "lowercase": True,
+            },
+        },
+    ).raise_for_status()
+    print(f"Collection '{COLLECTION}' created (size={VECTOR_SIZE}).")
+
+
+DEFAULT_UNIFIED_KEYWORDS = (
+    "source", "project", "date", "session_id",
+    "repo", "author", "state", "type", "tags",
+)
+UNIFIED_KEYWORD_FIELDS = DEFAULT_UNIFIED_KEYWORDS + tuple(
+    f.strip()
+    for f in os.environ.get("UNIFIED_EXTRA_KEYWORDS", "").split(",")
+    if f.strip()
+)
+
+
+def ensure_unified_collection():
+    if not COLLECTION_UNIFIED:
+        return
+    resp = requests.get(f"{QDRANT_URL}/collections/{COLLECTION_UNIFIED}")
+    if resp.status_code == 200:
+        return
+    requests.put(
+        f"{QDRANT_URL}/collections/{COLLECTION_UNIFIED}",
+        json={"vectors": {"size": VECTOR_SIZE, "distance": "Cosine"}, "on_disk_payload": True},
+    ).raise_for_status()
+    for field in UNIFIED_KEYWORD_FIELDS:
+        requests.put(
+            f"{QDRANT_URL}/collections/{COLLECTION_UNIFIED}/index",
+            json={"field_name": field, "field_schema": "keyword"},
+        )
+    requests.put(
+        f"{QDRANT_URL}/collections/{COLLECTION_UNIFIED}/index",
+        json={
+            "field_name": "text",
+            "field_schema": {
+                "type": "text",
+                "tokenizer": "multilingual",
+                "min_token_len": 2,
+                "max_token_len": 40,
+                "lowercase": True,
+            },
+        },
+    )
+    print(f"Unified collection '{COLLECTION_UNIFIED}' created (size={VECTOR_SIZE}).")
+
+
+def upsert_batch(collection: str, points: list):
+    if not collection or not points:
+        return
+    batch_size = 50
+    for i in range(0, len(points), batch_size):
+        batch = points[i : i + batch_size]
+        requests.put(
+            f"{QDRANT_URL}/collections/{collection}/points",
+            json={"points": batch},
+        ).raise_for_status()
 
 
 def get_embedding(text: str) -> list[float]:
     text = text.strip()
     if not text:
         text = "empty"
-    if len(text) > 2500:
-        text = text[:2500]
+    if len(text) > 8000:
+        text = text[:8000]
     resp = requests.post(
         f"{OLLAMA_URL}/api/embed",
         json={"model": EMBEDDING_MODEL, "input": text},
@@ -216,13 +305,8 @@ def index_chunks(chunks: list[dict]) -> int:
     if not points:
         return 0
 
-    batch_size = 50
-    for i in range(0, len(points), batch_size):
-        batch = points[i : i + batch_size]
-        requests.put(
-            f"{QDRANT_URL}/collections/{COLLECTION}/points",
-            json={"points": batch},
-        ).raise_for_status()
+    upsert_batch(COLLECTION, points)
+    upsert_batch(COLLECTION_UNIFIED, points)
 
     return len(points)
 
@@ -243,7 +327,7 @@ def parse_arg(flag: str) -> str | None:
 
 
 def main():
-    global QDRANT_URL, STATE_FILE
+    global QDRANT_URL, STATE_FILE, COLLECTION
 
     dry_run = "--dry-run" in sys.argv
     force = "--force" in sys.argv
@@ -252,13 +336,26 @@ def main():
         QDRANT_URL = v
     if v := parse_arg("--state-file"):
         STATE_FILE = Path(v)
+    if v := parse_arg("--collection"):
+        COLLECTION = v
 
-    vault_path = Path(parse_arg("--vault") or str(Path.home() / "pessoal" / "obsidian"))
+    default_vault = os.environ.get("OBSIDIAN_DIR") or str(Path.home() / "obsidian")
+    vault_path = Path(parse_arg("--vault") or default_vault)
+    if not vault_path.exists():
+        print(f"Vault not found: {vault_path}")
+        print("Set OBSIDIAN_DIR in .env or pass --vault <path>")
+        sys.exit(1)
 
     print(f"Obsidian → Qdrant ETL")
     print(f"  Vault: {vault_path}")
     print(f"  Qdrant: {QDRANT_URL}")
+    print(f"  Collection: {COLLECTION}")
+    print(f"  Model: {EMBEDDING_MODEL} ({VECTOR_SIZE}d)")
     print()
+
+    if not dry_run:
+        ensure_collection()
+        ensure_unified_collection()
 
     state = load_state()
     indexed = state["indexed_files"]

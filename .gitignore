@@ -2,8 +2,7 @@ __pycache__/
 *.pyc
 
 # state files gerados localmente
-.etl_state*.json
-.etl_prs_state.json
+.etl_*state*.json
 
 # logs
 *.log
@@ -13,3 +12,5 @@ __pycache__/
 
 # qdrant local data
 qdrant-data/
+
+.idea

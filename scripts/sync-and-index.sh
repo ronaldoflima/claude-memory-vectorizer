@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+# Ensure Homebrew binaries (gh, etc.) are reachable when run from cron.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -87,6 +90,17 @@ if [[ -n "$GITHUB_ORG" ]]; then
         2>&1 | tee -a "$LOG_FILE"
 else
     log "Skipping GitHub PRs (GITHUB_ORG not set)"
+fi
+
+# 6. ETL - Obsidian notes (optional)
+if [[ -n "${OBSIDIAN_DIR:-}" ]]; then
+    log "Indexing Obsidian notes ($OBSIDIAN_DIR)..."
+    PYTHONUNBUFFERED=1 "$PYTHON_BIN" "$ROOT_DIR/etl/obsidian/notes.py" \
+        --qdrant-url "$QDRANT_URL" \
+        --vault "$OBSIDIAN_DIR" \
+        2>&1 | tee -a "$LOG_FILE"
+else
+    log "Skipping Obsidian notes (OBSIDIAN_DIR not set)"
 fi
 
 log "=== Done ==="

@@ -25,6 +25,7 @@ if _env_file.exists():
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 COLLECTION = os.environ.get("COLLECTION", "agent_sessions")
+COLLECTION_UNIFIED = os.environ.get("COLLECTION_UNIFIED", "agent_memory")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
 VECTOR_SIZE = int(os.environ.get("VECTOR_SIZE", "768"))
 CHUNK_MAX_CHARS = int(os.environ.get("CHUNK_MAX_CHARS", "3500"))
@@ -78,6 +79,63 @@ def ensure_collection():
         },
     )
     print(f"Collection '{COLLECTION}' created (size={VECTOR_SIZE}).")
+
+
+DEFAULT_UNIFIED_KEYWORDS = (
+    "source", "project", "date", "session_id",
+    "repo", "author", "state", "type", "tags",
+)
+UNIFIED_KEYWORD_FIELDS = DEFAULT_UNIFIED_KEYWORDS + tuple(
+    f.strip()
+    for f in os.environ.get("UNIFIED_EXTRA_KEYWORDS", "").split(",")
+    if f.strip()
+)
+
+
+def ensure_unified_collection():
+    if not COLLECTION_UNIFIED:
+        return
+    resp = requests.get(f"{QDRANT_URL}/collections/{COLLECTION_UNIFIED}")
+    if resp.status_code == 200:
+        return
+    requests.put(
+        f"{QDRANT_URL}/collections/{COLLECTION_UNIFIED}",
+        json={
+            "vectors": {"size": VECTOR_SIZE, "distance": "Cosine"},
+            "on_disk_payload": True,
+        },
+    ).raise_for_status()
+    for field in UNIFIED_KEYWORD_FIELDS:
+        requests.put(
+            f"{QDRANT_URL}/collections/{COLLECTION_UNIFIED}/index",
+            json={"field_name": field, "field_schema": "keyword"},
+        )
+    requests.put(
+        f"{QDRANT_URL}/collections/{COLLECTION_UNIFIED}/index",
+        json={
+            "field_name": "text",
+            "field_schema": {
+                "type": "text",
+                "tokenizer": "multilingual",
+                "min_token_len": 2,
+                "max_token_len": 40,
+                "lowercase": True,
+            },
+        },
+    )
+    print(f"Unified collection '{COLLECTION_UNIFIED}' created (size={VECTOR_SIZE}).")
+
+
+def upsert_batch(collection: str, points: list):
+    if not collection or not points:
+        return
+    batch_size = 50
+    for i in range(0, len(points), batch_size):
+        batch = points[i : i + batch_size]
+        requests.put(
+            f"{QDRANT_URL}/collections/{collection}/points",
+            json={"points": batch},
+        ).raise_for_status()
 
 
 def load_session_dates() -> dict:
@@ -249,13 +307,8 @@ def index_chunks(chunks: list[dict]):
             },
         })
 
-    batch_size = 50
-    for i in range(0, len(points), batch_size):
-        batch = points[i : i + batch_size]
-        requests.put(
-            f"{QDRANT_URL}/collections/{COLLECTION}/points",
-            json={"points": batch},
-        ).raise_for_status()
+    upsert_batch(COLLECTION, points)
+    upsert_batch(COLLECTION_UNIFIED, points)
 
     return len(points)
 
@@ -354,6 +407,7 @@ def main():
 
     if not dry_run:
         ensure_collection()
+        ensure_unified_collection()
 
     state = load_state()
     indexed = state["indexed_files"]
