@@ -103,4 +103,16 @@ else
     log "Skipping Obsidian notes (OBSIDIAN_DIR not set)"
 fi
 
+# ETL - Teams messages (optional)
+if [[ -n "${TEAMS_CRAWLER_DIR:-}" ]]; then
+    TEAMS_DATA="${TEAMS_DATA_DIR:-$TEAMS_CRAWLER_DIR/data}"
+    log "Indexing Teams messages ($TEAMS_DATA)..."
+    PYTHONUNBUFFERED=1 TEAMS_CRAWLER_DIR="$TEAMS_CRAWLER_DIR" "$PYTHON_BIN" "$ROOT_DIR/etl/teams/messages.py" \
+        --qdrant-url "$QDRANT_URL" \
+        --data-dir "$TEAMS_DATA" \
+        2>&1 | tee -a "$LOG_FILE"
+else
+    log "Skipping Teams messages (TEAMS_CRAWLER_DIR not set)"
+fi
+
 log "=== Done ==="
