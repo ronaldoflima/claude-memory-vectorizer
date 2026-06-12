@@ -28,7 +28,6 @@ scripts/
   sync-and-index.sh         # Full sync: pull VPS sources + tunnel + index
   pull-from-vps.sh          # Pull Claude sessions (and optionally Obsidian) from VPS
   push-to-embedding-host.sh # Push local sources to a remote embedding host
-  check-health.sh           # Health check for Qdrant + Ollama
 search.py                   # CLI search tool
 platforms/
   claude-code/              # Claude Code skill + install script

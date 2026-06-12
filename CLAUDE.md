@@ -4,7 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-ETL pipeline that indexes Claude Code conversation histories (and optionally Obsidian notes + GitHub PRs) into Qdrant for semantic + fulltext search. Embeddings are generated locally via Ollama (`bge-m3`, 1024 dims, cosine). Single Qdrant collection: `agent_sessions`.
+ETL pipeline that indexes Claude Code conversation histories (and optionally Obsidian notes, GitHub PRs, Teams messages) into Qdrant for semantic + fulltext search. Embeddings are generated locally via Ollama (`bge-m3`, 1024 dims, cosine).
+
+**Collections** — each source writes to its own per-source collection **and** to a shared unified collection (`agent_memory`), so a single MCP tool can search across everything. All collections share the same vector config (1024 dims, cosine).
+
+| ETL | per-source collection | env override |
+|---|---|---|
+| `etl/claude/conversations.py` | `agent_sessions` | `COLLECTION` |
+| `etl/obsidian/notes.py` | `agent_notes` | `COLLECTION_NOTES` |
+| `etl/github/prs.py` | `agent_work_artifacts` | `COLLECTION_ARTIFACTS` |
+| `etl/teams/messages.py` | `agent_teams` | `COLLECTION_TEAMS` |
+| _all of the above_ | `agent_memory` (unified) | `COLLECTION_UNIFIED` |
 
 ## Common commands
 
@@ -22,9 +32,6 @@ python3 etl/claude/conversations.py --force
 # Full pipeline (VPS rsync + SSH tunnel to remote Qdrant + local/VPS/PR ETLs)
 ./scripts/sync-and-index.sh
 
-# Health check (Qdrant + Ollama)
-./scripts/check-health.sh
-
 # CLI search
 python3 search.py "query text" [--project NAME] [--date YYYY-MM-DD] [--limit N]
 ```
@@ -34,7 +41,8 @@ No test suite, linter, or build step. Config is loaded from `.env` at repo root 
 ## Architecture
 
 **ETL pattern** — each source lives in `etl/<source>/` as a standalone script with its own `.etl_state*.json` file tracking indexed file mtimes for incremental runs. All ETLs share:
-- The same Qdrant collection (`agent_sessions`) and embedding model
+- The same embedding model (`bge-m3`) and vector config (1024 dims, cosine)
+- **Dual-write**: every ETL calls `upsert_batch()` twice per batch — once into its per-source collection, once into the unified `agent_memory` collection (same point IDs in both). `ensure_collection()` creates both on first run.
 - `--qdrant-url`, `--source-label`, `--state-file` CLI overrides so the same script can be run multiple times against different source sets (local vs `vps-mcpgw`) while keeping separate state
 - Deterministic point IDs via `md5(text)[:16]` — re-indexing the same chunk is idempotent
 
@@ -42,7 +50,7 @@ No test suite, linter, or build step. Config is loaded from `.env` at repo root 
 
 **Memory files** — `etl/claude/conversations.py` also scans `<project>/memory/*.md` (skipping `MEMORY.md` index), parses frontmatter, and indexes them as `Memory [type] name: body` chunks with `session_id=memory-<stem>`.
 
-**Search** — hybrid: semantic first via Qdrant `/points/search`; if top score < `SEMANTIC_THRESHOLD` (0.6), fulltext fallback via `/points/scroll` with `match.text` filter, merged and deduped. Implemented identically in `search.py` (sync) and `mcp/conversation_history_search.py` (async `httpx`).
+**Search** — hybrid: semantic first via Qdrant `/points/search`; if top score < `SEMANTIC_THRESHOLD` (0.6), fulltext fallback via `/points/scroll` with `match.text` filter, merged and deduped. Implemented identically in `search.py` (sync) and the `mcp/` plugins (async `httpx`). Each searcher targets a specific collection: `search.py` defaults to `agent_sessions` (overridable via `--collection` / `--list-collections`), `mcp/conversation_history_search.py` → `agent_sessions`, `mcp/work_artifacts_search.py` → `agent_work_artifacts`. Search the unified `agent_memory` to span all sources at once.
 
 **MCP plugins** — files under `mcp/` target an external gateway that expects `services.base.ServicePlugin` / `ToolDefinition`. They aren't runnable from this repo alone; they're deployed into the gateway host.
 
@@ -50,6 +58,6 @@ No test suite, linter, or build step. Config is loaded from `.env` at repo root 
 
 ## Conventions
 
-- New ETLs should follow the pattern in `etl/claude/conversations.py`: env loading from repo-root `.env`, `ensure_collection()`, mtime-based state file, `--dry-run`/`--force`/`--qdrant-url` flags, batch size 50 on Qdrant upserts.
-- Never change the collection name, vector size (1024), or distance (cosine) without reindexing everything — IDs and payloads across all ETLs share the same collection.
+- New ETLs should follow the pattern in `etl/claude/conversations.py`: env loading from repo-root `.env`, `ensure_collection()` (creates both per-source + unified), mtime-based state file, `--dry-run`/`--force`/`--qdrant-url` flags, batch size 50 on Qdrant upserts, and dual-write (per-source collection + `agent_memory`).
+- Never change the vector size (1024) or distance (cosine) without reindexing everything — point IDs and payloads are shared across the per-source and unified collections. Collection names are env-configurable per ETL (see the table in Architecture), but renaming one means reindexing it.
 - `PROJECT_PATH_STRIP` is host-specific (strips things like the user's home prefix from Claude's mangled dir names) — keep it in `.env`, not code.

@@ -28,7 +28,6 @@ scripts/
   sync-and-index.sh         # Sync completo: puxa fontes do VPS + túnel + indexa
   pull-from-vps.sh          # Puxa sessões do Claude (e opcionalmente Obsidian) do VPS
   push-to-embedding-host.sh # Envia fontes locais para um host remoto de embedding
-  check-health.sh           # Health check do Qdrant + Ollama
 search.py                   # CLI de busca
 platforms/
   claude-code/              # Skill do Claude Code + script de instalação
