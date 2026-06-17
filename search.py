@@ -109,6 +109,44 @@ def semantic_search(query: str, collection: str, limit: int = 5, project: str = 
     return [{"id": r["id"], "score": r["score"], "payload": r["payload"], "match": "semantic"} for r in results]
 
 
+def derive_origin(payload: dict) -> str:
+    """Best-effort source kind. The payload `source` field is inconsistent across
+    ETLs (host label for claude/teams/notes, but "github" for PRs), so we derive
+    the real origin from discriminating fields instead."""
+    if payload.get("type") == "pr" or payload.get("repo") or payload.get("pr_number"):
+        return "github"
+    if payload.get("conversation_id") or payload.get("team_id"):
+        return "teams"
+    if str(payload.get("session_id", "")).startswith("memory-"):
+        return "memory"
+    file = str(payload.get("file", ""))
+    if ".claude/projects" in file:
+        return "claude"
+    if file.endswith(".md") or "obsidian" in file:
+        return "notes"
+    return payload.get("source") or "?"
+
+
+def derive_label(payload: dict) -> str:
+    """Human-readable project/context, falling back through origin-specific fields
+    so GitHub PRs and Teams threads don't render as '?'."""
+    return (
+        payload.get("project")
+        or payload.get("repo")
+        or payload.get("title")
+        or payload.get("conversation_id")
+        or "?"
+    )
+
+
+def derive_ref(payload: dict) -> str:
+    """Short reference identifier per origin (PR number, thread id, or session id)."""
+    if payload.get("pr_number"):
+        return f"PR#{payload['pr_number']}"
+    sid = payload.get("session_id") or payload.get("conversation_id") or "?"
+    return str(sid)[:8]
+
+
 def search(query: str, collection: str, limit: int = 5, project: str = None, date: str = None):
     results = semantic_search(query, collection, limit=limit, project=project, date=date)
 
@@ -129,8 +167,12 @@ def search(query: str, collection: str, limit: int = 5, project: str = None, dat
         date_info = payload.get("date", "?")
         match_type = r["match"]
         label = f"Score: {score:.4f}" if match_type == "semantic" else f"FULLTEXT#{r.get('rank', 0)+1}"
+        origin = derive_origin(payload)
+        host = payload.get("source", "?")
+        # host is only informative when it differs from the derived origin
+        origin_col = f"{origin}@{host}" if host not in (origin, "?", "github") else origin
         print(f"\n{'='*60}")
-        print(f"[{i+1}] {label} | {date_info} | {payload.get('project', '?')} | {payload.get('session_id', '?')[:8]}")
+        print(f"[{i+1}] {label} | {origin_col:>14} | {date_info} | {derive_label(payload)} | {derive_ref(payload)}")
         print(f"{'='*60}")
         text = payload["text"]
         if len(text) > 2000:

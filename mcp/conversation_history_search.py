@@ -7,6 +7,24 @@ COLLECTION = "agent_sessions"
 SEMANTIC_THRESHOLD = 0.6
 
 
+def derive_origin(payload: dict) -> str:
+    """Best-effort source kind. The payload `source` field is inconsistent across
+    ETLs (host label for claude/teams/notes, but "github" for PRs), so we derive
+    the real origin from discriminating fields instead."""
+    if payload.get("type") == "pr" or payload.get("repo") or payload.get("pr_number"):
+        return "github"
+    if payload.get("conversation_id") or payload.get("team_id"):
+        return "teams"
+    if str(payload.get("session_id", "")).startswith("memory-"):
+        return "memory"
+    file = str(payload.get("file", ""))
+    if ".claude/projects" in file:
+        return "claude"
+    if file.endswith(".md") or "obsidian" in file:
+        return "notes"
+    return payload.get("source") or "?"
+
+
 class ConversationHistorySearchPlugin(ServicePlugin):
     name = "conversation_history_search"
     required_credentials = []
@@ -75,6 +93,7 @@ class ConversationHistorySearchPlugin(ServicePlugin):
                 "project": r["payload"].get("project", ""),
                 "date": r["payload"].get("date", ""),
                 "session_id": r["payload"].get("session_id", "")[:8],
+                "origin": derive_origin(r["payload"]),
                 "source": r["payload"].get("source", ""),
                 "score": round(r["score"], 4) if r["match"] == "semantic" else None,
                 "match_type": r["match"],
