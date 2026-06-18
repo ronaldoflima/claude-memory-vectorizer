@@ -4,6 +4,7 @@ from services.base import ServicePlugin, ToolDefinition
 
 QDRANT_URL = "http://localhost:6333"
 COLLECTION = "agent_sessions"
+EMBEDDING_MODEL = "bge-m3"
 SEMANTIC_THRESHOLD = 0.6
 
 
@@ -137,7 +138,7 @@ class ConversationHistorySearchPlugin(ServicePlugin):
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 "http://localhost:11434/api/embed",
-                json={"model": "nomic-embed-text", "input": text},
+                json={"model": EMBEDDING_MODEL, "input": text},
             )
             resp.raise_for_status()
         return resp.json()["embeddings"][0]

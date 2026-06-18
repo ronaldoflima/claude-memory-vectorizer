@@ -11,7 +11,7 @@ description: Busca semântica + fulltext no histórico de conversas Claude Code 
 
 ## Pré-requisitos
 
-Qdrant em `http://localhost:6333` e Ollama com `nomic-embed-text`. Se Qdrant estiver remoto:
+Qdrant em `http://localhost:6333` e Ollama com `bge-m3`. Se Qdrant estiver remoto:
 
 ```bash
 ssh -fNL 6333:localhost:6333 vps-gateway
