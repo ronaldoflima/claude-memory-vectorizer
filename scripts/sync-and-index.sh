@@ -1,8 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-# Ensure Homebrew binaries (gh, etc.) are reachable when run from cron.
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+# Ensure Homebrew binaries (gh, etc.) and the user's local bin (uv-managed
+# python3 lives in ~/.local/bin) are reachable when run from cron.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -15,7 +16,15 @@ VPS_SOURCE_USER="${VPS_SOURCE_USER:-}"
 QDRANT_VPS_PORT="${QDRANT_VPS_PORT:-6333}"
 GITHUB_ORG="${GITHUB_ORG:-}"
 LOCAL_TUNNEL_PORT=16333
-PYTHON_BIN="${PYTHON_BIN:-/usr/local/bin/python3}"
+# Prefer the project's own venv (created with `uv venv`), where ETL deps
+# (requests/httpx/python-dotenv) live. Fall back to PATH python3.
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+    if [[ -x "$ROOT_DIR/.venv/bin/python3" ]]; then
+        PYTHON_BIN="$ROOT_DIR/.venv/bin/python3"
+    else
+        PYTHON_BIN="$(command -v python3 || true)"
+    fi
+fi
 LOG_FILE="$SCRIPT_DIR/sync.log"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
@@ -29,6 +38,12 @@ cleanup() {
 trap cleanup EXIT
 
 log "=== Starting sync-and-index ==="
+
+if [[ -z "$PYTHON_BIN" || ! -x "$PYTHON_BIN" ]]; then
+    log "Error: python3 not found (PYTHON_BIN='$PYTHON_BIN'). Set PYTHON_BIN in .env or ensure python3 is on PATH." >&2
+    exit 1
+fi
+log "Using python: $PYTHON_BIN"
 
 # 1. Rsync VPS sessions to local /tmp (optional)
 if [[ -n "$VPS_SOURCE_HOST" && -n "$VPS_SOURCE_USER" ]]; then
